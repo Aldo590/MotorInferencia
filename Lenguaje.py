@@ -1,5 +1,135 @@
+import os
 import re
+import json
 from typing import List, Dict, Tuple, Optional, Set
+
+
+# ==============================================================================
+# 0. GESTOR DE ESCENARIOS CON NOMBRE Y PERSISTENCIA EN DISCO (JSON)
+# ==============================================================================
+try:
+    DIRECTORIO_BASE = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    DIRECTORIO_BASE = os.getcwd()
+
+ARCHIVO_ESCENARIOS = os.path.join(DIRECTORIO_BASE, "escenarios_tableaux.json")
+
+ESCENARIOS_PREDETERMINADOS: Dict[str, List[str]] = {
+    "Caso del Video (2 cerradas, 1 abierta)": [
+        "Si es de día, entonces voy a trabajar",
+        "Si llueve, entonces no voy a trabajar",
+        "Es de día",
+    ],
+    "Caso Estudio y Libro (4 cerradas, 1 abierta)": [
+        "Estudio si y solo si tengo el libro",
+        "Si tengo el libro y leo entonces apruebo",
+        "Estudio o leo",
+        "No apruebo",
+        "No tengo el libro",
+    ],
+    "Caso Inconsistente (Todas cerradas)": [
+        "Si es de día, entonces voy a trabajar",
+        "Si llueve, entonces no voy a trabajar",
+        "Es de día y llueve",
+    ],
+}
+
+
+class GestorEscenarios:
+    """
+    Administra el guardado y carga de escenarios con nombre personalizado
+    y recuerda siempre cuál fue el último escenario visto al cerrar el programa.
+    """
+
+    @staticmethod
+    def _cargar_archivo() -> dict:
+        if os.path.exists(ARCHIVO_ESCENARIOS):
+            try:
+                with open(ARCHIVO_ESCENARIOS, "r", encoding="utf-8") as f:
+                    datos = json.load(f)
+                if isinstance(datos, dict) and "escenarios" in datos:
+                    return datos
+            except (OSError, json.JSONDecodeError):
+                pass
+
+        # Estructura inicial si el archivo aún no existe
+        nombre_inicial = "Caso del Video (2 cerradas, 1 abierta)"
+        datos_iniciales = {
+            "ultimo_nombre": nombre_inicial,
+            "ultimas_reglas": list(ESCENARIOS_PREDETERMINADOS[nombre_inicial]),
+            "escenarios": dict(ESCENARIOS_PREDETERMINADOS),
+        }
+        GestorEscenarios._guardar_archivo(datos_iniciales)
+        return datos_iniciales
+
+    @staticmethod
+    def _guardar_archivo(datos: dict) -> None:
+        try:
+            with open(ARCHIVO_ESCENARIOS, "w", encoding="utf-8") as f:
+                json.dump(datos, f, ensure_ascii=False, indent=2)
+        except OSError as e:
+            print(f"  [Aviso] No se pudo guardar en disco: {e}")
+
+    @classmethod
+    def obtener_ultimo_escenario(cls) -> Tuple[str, List[str]]:
+        """Devuelve (nombre_escenario, lista_de_reglas) del último escenario visto."""
+        datos = cls._cargar_archivo()
+        nombre = datos.get("ultimo_nombre", "Escenario sin título")
+        reglas = datos.get("ultimas_reglas", [])
+        if not reglas:
+            nombre = "Caso del Video (2 cerradas, 1 abierta)"
+            reglas = list(ESCENARIOS_PREDETERMINADOS[nombre])
+        return nombre, reglas
+
+    @classmethod
+    def registrar_ultimo_visto(cls, nombre: str, reglas: List[str]) -> None:
+        """Actualiza cuál fue el último escenario visualizado sin obligar a guardarlo en el catálogo."""
+        datos = cls._cargar_archivo()
+        datos["ultimo_nombre"] = nombre
+        datos["ultimas_reglas"] = list(reglas)
+        cls._guardar_archivo(datos)
+
+    @classmethod
+    def guardar_escenario_con_nombre(cls, nombre: str, reglas: List[str]) -> None:
+        """Guarda un escenario bajo el nombre elegido por el usuario y lo marca como último visto."""
+        nombre_limpio = nombre.strip()
+        if not nombre_limpio:
+            return
+        datos = cls._cargar_archivo()
+        datos["escenarios"][nombre_limpio] = list(reglas)
+        datos["ultimo_nombre"] = nombre_limpio
+        datos["ultimas_reglas"] = list(reglas)
+        cls._guardar_archivo(datos)
+
+    @classmethod
+    def listar_escenarios(cls) -> List[Tuple[str, List[str]]]:
+        """Devuelve una lista de tuplas (nombre, reglas) con todos los escenarios guardados."""
+        datos = cls._cargar_archivo()
+        return list(datos.get("escenarios", {}).items())
+
+    @classmethod
+    def cargar_escenario_por_nombre(cls, nombre: str) -> Optional[List[str]]:
+        """Busca un escenario por su nombre, lo marca como último visto y devuelve sus reglas."""
+        datos = cls._cargar_archivo()
+        escenarios = datos.get("escenarios", {})
+        if nombre in escenarios:
+            reglas = list(escenarios[nombre])
+            datos["ultimo_nombre"] = nombre
+            datos["ultimas_reglas"] = reglas
+            cls._guardar_archivo(datos)
+            return reglas
+        return None
+
+    @classmethod
+    def eliminar_escenario(cls, nombre: str) -> bool:
+        """Elimina un escenario guardado por su nombre."""
+        datos = cls._cargar_archivo()
+        escenarios = datos.get("escenarios", {})
+        if nombre in escenarios:
+            del escenarios[nombre]
+            cls._guardar_archivo(datos)
+            return True
+        return False
 
 
 # ==============================================================================
@@ -556,29 +686,70 @@ class RenderizadorArbolConsola:
 
 
 # ==============================================================================
-# 5. INTERFAZ GRÁFICA INTERACTIVA (TKINTER GUI)
+# 5. INTERFAZ GRÁFICA INTERACTIVA CON SELECTOR Y GUARDADO POR NOMBRE (TKINTER)
 # ==============================================================================
-def abrir_visor_grafico(reglas_iniciales: List[str]):
-    """Abre una ventana interactiva completa con tabla de átomos, fórmulas y árbol gráfico."""
+def abrir_visor_grafico():
+    """Abre la ventana gráfica con selector de escenarios guardados y guardado con nombre."""
     try:
         import tkinter as tk
-        from tkinter import messagebox
+        from tkinter import ttk, messagebox
     except ImportError:
-        print("Tkinter no está instalado en este entorno. Usa la Opción 1 en consola.")
+        print("Tkinter no está instalado en este entorno. Usa las opciones en consola.")
         return
 
+    nombre_inicial, reglas_iniciales = GestorEscenarios.obtener_ultimo_escenario()
+
     ventana = tk.Tk()
-    ventana.title("Árboles Semánticos (Tableaux Analíticos) - Lógica Proposicional")
-    ventana.geometry("1200x820")
+    ventana.title(f"Árboles Semánticos (Tableaux) - Escenario: {nombre_inicial}")
+    ventana.geometry("1240x860")
     ventana.configure(bg="#f8fafc")
 
-    # Panel superior de entrada
+    # --- Barra superior: Selector y Guardado de Escenarios por Nombre ---
+    barra_escenarios = tk.Frame(ventana, bg="#cbd5e1", padx=12, pady=8)
+    barra_escenarios.pack(fill=tk.X)
+
+    tk.Label(
+        barra_escenarios,
+        text="📂 Escenarios guardados:",
+        bg="#cbd5e1",
+        fg="#0f172a",
+        font=("Consolas", 10, "bold"),
+    ).pack(side=tk.LEFT)
+
+    nombres_guardados = [n for n, _ in GestorEscenarios.listar_escenarios()]
+    combo_escenarios = ttk.Combobox(
+        barra_escenarios,
+        values=nombres_guardados,
+        width=36,
+        font=("Consolas", 10),
+        state="readonly",
+    )
+    if nombre_inicial in nombres_guardados:
+        combo_escenarios.set(nombre_inicial)
+    elif nombres_guardados:
+        combo_escenarios.set(nombres_guardados[0])
+    combo_escenarios.pack(side=tk.LEFT, padx=6)
+
+    # Entrada para guardar con un nuevo nombre
+    tk.Label(
+        barra_escenarios,
+        text="   ✏️ Nombre para guardar:",
+        bg="#cbd5e1",
+        fg="#0f172a",
+        font=("Consolas", 10, "bold"),
+    ).pack(side=tk.LEFT, padx=(10, 4))
+
+    entry_nombre = tk.Entry(barra_escenarios, width=28, font=("Consolas", 10))
+    entry_nombre.insert(0, nombre_inicial)
+    entry_nombre.pack(side=tk.LEFT, padx=4)
+
+    # --- Panel de edición de reglas ---
     panel_sup = tk.Frame(ventana, bg="#e2e8f0", padx=12, pady=8)
     panel_sup.pack(fill=tk.X)
 
     tk.Label(
         panel_sup,
-        text="Escribe tus reglas en español (una regla por línea):",
+        text="Reglas de la Base de Conocimiento (escribe una oración en español por línea):",
         bg="#e2e8f0",
         fg="#0f172a",
         font=("Consolas", 11, "bold"),
@@ -587,11 +758,10 @@ def abrir_visor_grafico(reglas_iniciales: List[str]):
     frame_entrada = tk.Frame(panel_sup, bg="#e2e8f0")
     frame_entrada.pack(fill=tk.X, pady=4)
 
-    txt_reglas = tk.Text(frame_entrada, height=4, font=("Consolas", 11), bg="#ffffff", fg="#0f172a")
+    txt_reglas = tk.Text(frame_entrada, height=5, font=("Consolas", 11), bg="#ffffff", fg="#0f172a")
     txt_reglas.pack(side=tk.LEFT, fill=tk.X, expand=True)
     txt_reglas.insert("1.0", "\n".join(reglas_iniciales))
 
-    # Panel intermedio de información (Tabla de átomos, Reglas y Modelos)
     txt_info = tk.Text(
         panel_sup,
         height=8,
@@ -603,7 +773,7 @@ def abrir_visor_grafico(reglas_iniciales: List[str]):
     )
     txt_info.pack(fill=tk.X, pady=4)
 
-    # Lienzo del árbol con barras de desplazamiento
+    # --- Lienzo del árbol ---
     frame_canvas = tk.Frame(ventana, bg="#ffffff")
     frame_canvas.pack(fill=tk.BOTH, expand=True)
 
@@ -621,6 +791,12 @@ def abrir_visor_grafico(reglas_iniciales: List[str]):
     canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
     hbar.config(command=canvas.xview)
     vbar.config(command=canvas.yview)
+
+    def actualizar_lista_combo(seleccionar: Optional[str] = None):
+        lista = [n for n, _ in GestorEscenarios.listar_escenarios()]
+        combo_escenarios["values"] = lista
+        if seleccionar and seleccionar in lista:
+            combo_escenarios.set(seleccionar)
 
     def calcular_ancho_subarbol(nodo: NodoTableau) -> int:
         if not nodo.hijos:
@@ -675,20 +851,24 @@ def abrir_visor_grafico(reglas_iniciales: List[str]):
                 dibujar_nodo(h, x_hijo, y_siguiente)
                 x_cursor += w_h + 40
 
-    def resolver_y_dibujar():
+    def resolver_y_dibujar(registrar_ultimo: bool = True):
         canvas.delete("all")
         lineas_texto = [l.strip() for l in txt_reglas.get("1.0", tk.END).splitlines() if l.strip()]
         if not lineas_texto:
             messagebox.showwarning("Aviso", "Escribe al menos una regla en español.")
             return
 
+        nombre_actual = entry_nombre.get().strip() or "Escenario en edición"
+        if registrar_ultimo:
+            GestorEscenarios.registrar_ultimo_visto(nombre_actual, lineas_texto)
+            ventana.title(f"Árboles Semánticos (Tableaux) - Escenario: {nombre_actual}")
+
         analizador = AnalizadorLenguajeNatural()
         formulas = [analizador.parsear(r) for r in lineas_texto]
         motor = MotorTableau(formulas)
         motor.construir()
 
-        # Construir resumen detallado en el panel de texto
-        resumen = []
+        resumen = [f"ESCENARIO ACTIVO: {nombre_actual}"]
         atomos_str = "  |  ".join(
             f"{letra} = «{sig}»" for letra, sig in sorted(analizador.letra_a_significado.items())
         )
@@ -724,28 +904,107 @@ def abrir_visor_grafico(reglas_iniciales: List[str]):
         dibujar_nodo(motor.raiz, ancho_req // 2, 25)
         canvas.configure(scrollregion=canvas.bbox("all"))
 
+    def accion_cargar_seleccionado():
+        elegido = combo_escenarios.get().strip()
+        if not elegido:
+            return
+        reglas = GestorEscenarios.cargar_escenario_por_nombre(elegido)
+        if reglas:
+            txt_reglas.delete("1.0", tk.END)
+            txt_reglas.insert("1.0", "\n".join(reglas))
+            entry_nombre.delete(0, tk.END)
+            entry_nombre.insert(0, elegido)
+            resolver_y_dibujar(registrar_ultimo=True)
+
+    def accion_guardar_con_nombre():
+        nombre_nuevo = entry_nombre.get().strip()
+        if not nombre_nuevo:
+            messagebox.showwarning("Falta nombre", "Escribe un nombre en el cuadro 'Nombre para guardar'.")
+            return
+        lineas_texto = [l.strip() for l in txt_reglas.get("1.0", tk.END).splitlines() if l.strip()]
+        if not lineas_texto:
+            messagebox.showwarning("Sin reglas", "Escribe al menos una regla antes de guardar.")
+            return
+
+        GestorEscenarios.guardar_escenario_con_nombre(nombre_nuevo, lineas_texto)
+        actualizar_lista_combo(seleccionar=nombre_nuevo)
+        resolver_y_dibujar(registrar_ultimo=True)
+        messagebox.showinfo("Escenario guardado", f"Se guardó el escenario «{nombre_nuevo}» correctamente.")
+
+    def accion_eliminar_seleccionado():
+        elegido = combo_escenarios.get().strip()
+        if not elegido:
+            return
+        if messagebox.askyesno("Eliminar escenario", f"¿Seguro que deseas eliminar «{elegido}»?"):
+            GestorEscenarios.eliminar_escenario(elegido)
+            actualizar_lista_combo()
+            lista_restante = combo_escenarios["values"]
+            if lista_restante:
+                combo_escenarios.set(lista_restante[0])
+
+    # Botones en la barra superior de escenarios
+    btn_cargar = tk.Button(
+        barra_escenarios,
+        text="📥 Cargar seleccionado",
+        command=accion_cargar_seleccionado,
+        bg="#0284c7",
+        fg="#ffffff",
+        font=("Consolas", 9, "bold"),
+        padx=8,
+    )
+    btn_cargar.pack(side=tk.LEFT, padx=4)
+
+    btn_borrar = tk.Button(
+        barra_escenarios,
+        text="🗑️",
+        command=accion_eliminar_seleccionado,
+        bg="#dc2626",
+        fg="#ffffff",
+        font=("Consolas", 9),
+        padx=6,
+    )
+    btn_borrar.pack(side=tk.LEFT, padx=2)
+
+    btn_guardar = tk.Button(
+        barra_escenarios,
+        text="💾 Guardar escenario",
+        command=accion_guardar_con_nombre,
+        bg="#16a34a",
+        fg="#ffffff",
+        font=("Consolas", 9, "bold"),
+        padx=10,
+    )
+    btn_guardar.pack(side=tk.LEFT, padx=6)
+
+    # Botón principal de construir árbol
     btn_resolver = tk.Button(
         frame_entrada,
         text="Construir Árbol\nSemántico",
-        command=resolver_y_dibujar,
+        command=lambda: resolver_y_dibujar(registrar_ultimo=True),
         bg="#2563eb",
         fg="#ffffff",
         font=("Consolas", 11, "bold"),
         padx=16,
-        pady=8,
+        pady=10,
     )
     btn_resolver.pack(side=tk.LEFT, padx=10)
 
-    resolver_y_dibujar()
+    # También carga automáticamente al cambiar la opción del desplegable
+    combo_escenarios.bind("<<ComboboxSelected>>", lambda _e: accion_cargar_seleccionado())
+
+    resolver_y_dibujar(registrar_ultimo=False)
     ventana.mainloop()
 
 
 # ==============================================================================
 # 6. FUNCIÓN PRINCIPAL DE REPORTE COMPLETO EN CONSOLA
 # ==============================================================================
-def procesar_base_conocimiento(titulo: str, reglas_naturales: List[str]):
+def procesar_base_conocimiento(titulo: str, reglas_naturales: List[str], registrar_ultimo: bool = True):
+    if registrar_ultimo:
+        GestorEscenarios.registrar_ultimo_visto(titulo, reglas_naturales)
+
     print("\n" + "═" * 84)
-    print(f"  {titulo}")
+    print(f"  ESCENARIO: {titulo}")
     print("═" * 84)
 
     analizador = AnalizadorLenguajeNatural()
@@ -832,45 +1091,38 @@ def procesar_base_conocimiento(titulo: str, reglas_naturales: List[str]):
 
 
 # ==============================================================================
-# 7. PUNTO DE ENTRADA INTERACTIVO (FUNCIONA EN CUALQUIER EDITOR / CONSOLA)
+# 7. MENÚ PRINCIPAL CON GESTIÓN DE ESCENARIOS POR NOMBRE
 # ==============================================================================
 if __name__ == "__main__":
-    caso_video = [
-        "Si es de día, entonces voy a trabajar",
-        "Si llueve, entonces no voy a trabajar",
-        "Es de día",
-    ]
+    # 1. Al arrancar, abre automáticamente el último escenario visto antes de cerrar
+    ultimo_titulo, ultimas_reglas = GestorEscenarios.obtener_ultimo_escenario()
+    print(f"\n💾 [AUTO-CARGA] Abriendo tu último escenario visto: «{ultimo_titulo}»")
+    procesar_base_conocimiento(ultimo_titulo, ultimas_reglas, registrar_ultimo=False)
 
-    caso_inconsistente = [
-        "Si es de día, entonces voy a trabajar",
-        "Si llueve, entonces no voy a trabajar",
-        "Es de día y llueve",
-    ]
-
-    # Muestra primero el caso obligatorio del video al arrancar
-    procesar_base_conocimiento(
-        "CASO DE PRUEBA DEL VIDEO: 2 RAMAS CERRADAS Y 1 ABIERTA",
-        caso_video,
-    )
-
-    # Bucle interactivo directo (sin bloqueo sys.stdin.isatty)
+    # 2. Bucle principal del menú
     while True:
-        print("\n" + "═" * 68)
-        print("  MENÚ INTERACTIVO - ÁRBOLES SEMÁNTICOS (TABLEAUX)")
-        print("═" * 68)
-        print("  [1] Escribir mis propias reglas en español aquí en la Consola")
-        print("  [2] Abrir ventana gráfica interactiva (Tkinter GUI a color)")
-        print("  [3] Ver ejemplo donde todas las ramas se cierran (Inconsistente)")
+        actual_titulo, actual_reglas = GestorEscenarios.obtener_ultimo_escenario()
+        lista_guardados = GestorEscenarios.listar_escenarios()
+
+        print("\n" + "═" * 76)
+        print("  MENÚ PRINCIPAL - GESTOR DE ESCENARIOS Y ÁRBOLES SEMÁNTICOS")
+        print(f"  📌 Escenario actual cargado: «{actual_titulo}»")
+        print("═" * 76)
+        print("  [1] Escribir un nuevo escenario en español (y guardarlo con nombre)")
+        print(f"  [2] Seleccionar y cargar un escenario guardado ({len(lista_guardados)} disponibles)")
+        print("  [3] Guardar o renombrar el escenario actual con un nuevo nombre")
+        print("  [4] Eliminar un escenario guardado")
+        print("  [5] Abrir Ventana Gráfica Interactiva (con menú desplegable de escenarios)")
         print("  [0] Salir")
 
         try:
-            opcion = input("\n👉 Escribe una opción (1, 2, 3 o 0) y presiona Enter: ").strip()
+            opcion = input("\n👉 Elige una opción (1-5 o 0): ").strip()
         except EOFError:
             break
 
         if opcion == "1":
-            print("\nEscribe tus reglas en español una por una y presiona Enter en cada línea.")
-            print("(Para terminar de meter reglas, deja el renglón vacío y presiona Enter):\n")
+            print("\nEscribe las reglas en español una por una y presiona Enter en cada línea.")
+            print("(Deja el renglón vacío y presiona Enter cuando termines de escribir las reglas):\n")
             nuevas_reglas = []
             while True:
                 try:
@@ -882,22 +1134,88 @@ if __name__ == "__main__":
                 nuevas_reglas.append(linea)
 
             if nuevas_reglas:
-                procesar_base_conocimiento("BASE DE CONOCIMIENTO DEL USUARIO", nuevas_reglas)
+                try:
+                    nombre_escenario = input(
+                        "\n✏️ Escribe un nombre para guardar este escenario (o Enter para no guardarlo en la lista): "
+                    ).strip()
+                except EOFError:
+                    nombre_escenario = ""
+
+                if nombre_escenario:
+                    GestorEscenarios.guardar_escenario_con_nombre(nombre_escenario, nuevas_reglas)
+                    procesar_base_conocimiento(nombre_escenario, nuevas_reglas, registrar_ultimo=True)
+                    print(f"  ✅ Escenario guardado como «{nombre_escenario}» y establecido como último visto.")
+                else:
+                    procesar_base_conocimiento("Escenario temporal (Último visto)", nuevas_reglas, registrar_ultimo=True)
+                    print("  💾 Quedó registrado como último visto (puedes nombrarlo después con la opción [3]).")
             else:
                 print("  ⚠ No ingresaste ninguna regla.")
 
         elif opcion == "2":
-            print("\nAbriendo ventana gráfica... (Ciérrala cuando quieras volver a este menú)")
-            abrir_visor_grafico(caso_video)
+            lista_guardados = GestorEscenarios.listar_escenarios()
+            if not lista_guardados:
+                print("  ⚠ No hay escenarios guardados todavía.")
+                continue
+
+            print("\n📂 ESCENARIOS GUARDADOS DISPONIBLES:")
+            for idx, (nombre, reglas) in enumerate(lista_guardados, 1):
+                vista_previa = " ; ".join(reglas[:2]) + ("..." if len(reglas) > 2 else "")
+                print(f"  [{idx}] {nombre} ({len(reglas)} reglas: {vista_previa})")
+
+            try:
+                sel = input(f"\n👉 Escribe el número del escenario a cargar (1-{len(lista_guardados)}) o Enter para cancelar: ").strip()
+            except EOFError:
+                continue
+
+            if sel.isdigit() and 1 <= int(sel) <= len(lista_guardados):
+                nombre_elegido, reglas_elegidas = lista_guardados[int(sel) - 1]
+                GestorEscenarios.cargar_escenario_por_nombre(nombre_elegido)
+                procesar_base_conocimiento(nombre_elegido, reglas_elegidas, registrar_ultimo=True)
+                print(f"  ✅ Escenario «{nombre_elegido}» cargado. Si cierras el programa, abrirá este al iniciar.")
+            elif sel:
+                print("  ⚠ Número inválido.")
 
         elif opcion == "3":
-            procesar_base_conocimiento(
-                "CASO DE PRUEBA INCONSISTENTE: TODAS LAS RAMAS CERRADAS",
-                caso_inconsistente,
-            )
+            print(f"\nEscenario actual: «{actual_titulo}»")
+            for i, r in enumerate(actual_reglas, 1):
+                print(f"  R{i}: {r}")
+            try:
+                nuevo_nombre = input("\n✏️ Escribe el nombre con el que quieres guardar este escenario: ").strip()
+            except EOFError:
+                nuevo_nombre = ""
+
+            if nuevo_nombre:
+                GestorEscenarios.guardar_escenario_con_nombre(nuevo_nombre, actual_reglas)
+                print(f"  ✅ Guardado correctamente como «{nuevo_nombre}».")
+            else:
+                print("  ⚠ Operación cancelada.")
+
+        elif opcion == "4":
+            lista_guardados = GestorEscenarios.listar_escenarios()
+            if not lista_guardados:
+                print("  ⚠ No hay escenarios para eliminar.")
+                continue
+
+            print("\n🗑️ SELECCIONA EL ESCENARIO A ELIMINAR:")
+            for idx, (nombre, _) in enumerate(lista_guardados, 1):
+                print(f"  [{idx}] {nombre}")
+
+            try:
+                sel = input(f"\n👉 Número a eliminar (1-{len(lista_guardados)}) o Enter para cancelar: ").strip()
+            except EOFError:
+                continue
+
+            if sel.isdigit() and 1 <= int(sel) <= len(lista_guardados):
+                nombre_borrar, _ = lista_guardados[int(sel) - 1]
+                GestorEscenarios.eliminar_escenario(nombre_borrar)
+                print(f"  🗑️ Se eliminó el escenario «{nombre_borrar}».")
+
+        elif opcion == "5":
+            print("\nAbriendo ventana gráfica... (Cualquier escenario que elijas o guardes ahí quedará como último visto)")
+            abrir_visor_grafico()
 
         elif opcion == "0":
-            print("Programa finalizado.")
+            print(f"Programa finalizado. Al volver a abrirlo cargará: «{actual_titulo}».")
             break
         else:
-            print("  ⚠ Opción no válida. Escribe 1, 2, 3 o 0.")
+            print("  ⚠ Opción no válida. Elige un número del 0 al 5.")

@@ -1,0 +1,8 @@
+{
+  "titulo": "ÚLTIMO EJEMPLO VISTO (GUARDADO AUTOMÁTICAMENTE)",
+  "reglas": [
+    "Si hace frío, entonces prendo la calefacción o uso chamarra",
+    "Si prendo la calefacción, entonces gasto luz",
+    "Hace frío y no gasto luz"
+  ]
+}

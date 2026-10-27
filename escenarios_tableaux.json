@@ -1,0 +1,41 @@
+{
+  "ultimo_nombre": "Apruebo",
+  "ultimas_reglas": [
+    "Estudio si y solo si tengo el libro",
+    "Si tengo el libro y leo entonces apruebo",
+    "Estudio o leo",
+    "No apruebo",
+    "No tengo el libro"
+  ],
+  "escenarios": {
+    "Caso del Video (2 cerradas, 1 abierta)": [
+      "Si es de día, entonces voy a trabajar",
+      "Si llueve, entonces no voy a trabajar",
+      "Es de día"
+    ],
+    "Caso Estudio y Libro (4 cerradas, 1 abierta)": [
+      "Estudio si y solo si tengo el libro",
+      "Si tengo el libro y leo entonces apruebo",
+      "Estudio o leo",
+      "No apruebo",
+      "No tengo el libro"
+    ],
+    "Caso Inconsistente (Todas cerradas)": [
+      "Si es de día, entonces voy a trabajar",
+      "Si llueve, entonces no voy a trabajar",
+      "Es de día y llueve"
+    ],
+    "Frio": [
+      "Si hace frío, entonces prendo la calefacción o uso chamarra",
+      "Si prendo la calefacción, entonces gasto luz",
+      "Hace frío y no gasto luz"
+    ],
+    "Apruebo": [
+      "Estudio si y solo si tengo el libro",
+      "Si tengo el libro y leo entonces apruebo",
+      "Estudio o leo",
+      "No apruebo",
+      "No tengo el libro"
+    ]
+  }
+}
